@@ -1,0 +1,14 @@
+{
+  "mermaid-validator": {
+    "command": "cargo",
+    "args": [
+      "run",
+      "--quiet",
+      "--manifest-path",
+      "/Users/pittcat/Dev/Rust/mermaid_validator_rs/Cargo.toml"
+    ],
+    "env": {
+      "MERMAID_TIMEOUT": "30"
+    }
+  }
+}

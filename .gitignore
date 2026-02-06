@@ -1,0 +1,68 @@
+# Rust 项目编译输出
+/target
+**/target/
+Cargo.lock
+
+# IDE 和编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*~
+.vimrc_local
+
+# 操作系统生成的文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.temp
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# 构建产物
+debug/
+dist/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+*.out
+
+# 性能分析数据
+perf.data*
+profile.*
+
+# 依赖跟踪文件
+Cargo.toml.bak
+
+# 本地配置文件
+.env
+.env.*
+!.env.example
+
+# Rust 格式化工具
+.rustfmt.toml
+.rustfmt.toml.bak
+
+# 文档生成
+doc/
+
+# 覆盖率报告
+tarpaulin-report.html
+lcov.info
+
+# 其他
+*.orig
+*.rej
+.serena/
