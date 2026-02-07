@@ -12,3 +12,10 @@ schemars = "1.2.1"
 base64 = "0.22.1"
 thiserror = "2.0.11"
 serde_json = "1.0.149"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "mermaid_bench"
+harness = false
