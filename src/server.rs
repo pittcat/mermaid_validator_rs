@@ -205,13 +205,11 @@ impl MermaidServer {
             }
         };
         let timeout = timeout_from_env();
-        let result = validate_mermaid_block_in_markdown(&markdown, params.block_index, timeout).await;
+        let result =
+            validate_mermaid_block_in_markdown(&markdown, params.block_index, timeout).await;
 
         let summary = if result.valid {
-            format!(
-                "Block #{} is valid for GitHub preview",
-                params.block_index
-            )
+            format!("Block #{} is valid for GitHub preview", params.block_index)
         } else {
             format!(
                 "Block #{} is invalid for GitHub preview ({} issue(s))",
@@ -267,11 +265,13 @@ fn strip_standalone_fenced_mermaid(input: &str) -> Option<Result<String, String>
     let first = lines.next()?.trim();
     let mut body: Vec<&str> = lines.collect();
     if body.is_empty() {
-        return Some(Err("Invalid Mermaid code block: empty fenced content".to_string()));
+        return Some(Err(
+            "Invalid Mermaid code block: empty fenced content".to_string()
+        ));
     }
     if body.last()?.trim() != "```" {
         return Some(Err(
-            "Invalid Mermaid code block: missing closing fence ```".to_string(),
+            "Invalid Mermaid code block: missing closing fence ```".to_string()
         ));
     }
     if !is_mermaid_fence(first) && first != "```" {
@@ -307,7 +307,7 @@ fn extract_mermaid_block_from_markdown(input: &str) -> Option<Result<String, Str
         Some(end) => end,
         None => {
             return Some(Err(
-                "Invalid Mermaid code block: missing closing fence ```".to_string(),
+                "Invalid Mermaid code block: missing closing fence ```".to_string()
             ))
         }
     };

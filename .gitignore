@@ -62,6 +62,13 @@ doc/
 tarpaulin-report.html
 lcov.info
 
+# Performance artifacts
+target/criterion/
+flamegraphs/
+cargo-flamegraph.trace/
+benchmark_output.log
+PERF_SUMMARY.txt
+
 # 其他
 *.orig
 *.rej

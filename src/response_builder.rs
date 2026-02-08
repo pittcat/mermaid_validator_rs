@@ -33,9 +33,7 @@ pub fn invalid_result(error_message: &str) -> CallToolResult {
     }
 
     if let Some(details) = details {
-        content.push(Content::text(format!(
-            "Detailed error output:\n{details}"
-        )));
+        content.push(Content::text(format!("Detailed error output:\n{details}")));
     }
 
     CallToolResult {
@@ -58,13 +56,10 @@ pub fn processing_error(error_message: &str) -> CallToolResult {
 }
 
 fn split_error_details(message: &str) -> (String, Option<String>) {
-    let mut parts = message.split("\n\nError details:\n");
-    let main_error = parts.next().unwrap_or("").to_string();
-    let details: Vec<&str> = parts.collect();
-    if details.is_empty() {
-        (main_error, None)
+    if let Some((main_error, details)) = message.split_once("\n\nError details:\n") {
+        (main_error.to_string(), Some(details.to_string()))
     } else {
-        (main_error, Some(details.join("\n")))
+        (message.to_string(), None)
     }
 }
 
@@ -102,57 +97,73 @@ impl ErrorContext {
 
 fn parse_error_context(message: &str) -> ErrorContext {
     let mut context = ErrorContext::default();
-    let lines: Vec<&str> = message.lines().collect();
+    let mut take_snippet_line = false;
+    let mut take_caret_line = false;
 
-    for (idx, line) in lines.iter().enumerate() {
+    for line in message.lines() {
+        if context.reason.is_none() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty()
+                && (trimmed.contains("Expecting")
+                    || trimmed.contains("UnknownDiagramError")
+                    || trimmed.contains("got "))
+            {
+                context.reason = Some(trimmed.to_string());
+            }
+        }
+
+        if take_snippet_line {
+            context.snippet = Some(line.trim_end().to_string());
+            take_snippet_line = false;
+            take_caret_line = true;
+            continue;
+        }
+
+        if take_caret_line {
+            if let Some(pos) = line.find('^') {
+                context.column = Some((pos + 1) as u32);
+            }
+            take_caret_line = false;
+            continue;
+        }
+
         if let Some(line_number) = extract_line_number(line) {
             context.line = Some(line_number);
-            if let Some(snippet) = lines.get(idx + 1) {
-                context.snippet = Some(snippet.trim_end().to_string());
-            }
-            if let Some(caret_line) = lines.get(idx + 2) {
-                if let Some(pos) = caret_line.find('^') {
-                    context.column = Some((pos + 1) as u32);
-                }
-            }
-            break;
+            take_snippet_line = true;
         }
     }
 
-    context.reason = find_reason(&lines);
     context
 }
 
 fn extract_line_number(line: &str) -> Option<u32> {
-    let lower = line.to_ascii_lowercase();
-    let marker = "parse error on line ";
-    let idx = lower.find(marker)?;
-    let mut chars = line[idx + marker.len()..].chars();
-    let mut number = String::new();
-    while let Some(ch) = chars.next() {
-        if ch.is_ascii_digit() {
-            number.push(ch);
+    const MARKER: &[u8] = b"parse error on line ";
+    let bytes = line.as_bytes();
+
+    if bytes.len() < MARKER.len() {
+        return None;
+    }
+
+    let marker_start = bytes
+        .windows(MARKER.len())
+        .position(|window| window.eq_ignore_ascii_case(MARKER))?;
+
+    let mut index = marker_start + MARKER.len();
+    let mut value: u32 = 0;
+    let mut seen_digit = false;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte.is_ascii_digit() {
+            seen_digit = true;
+            value = value.checked_mul(10)?.checked_add((byte - b'0') as u32)?;
+            index += 1;
         } else {
             break;
         }
     }
-    number.parse().ok()
-}
 
-fn find_reason(lines: &[&str]) -> Option<String> {
-    for line in lines {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if trimmed.contains("Expecting")
-            || trimmed.contains("UnknownDiagramError")
-            || trimmed.contains("got ")
-        {
-            return Some(trimmed.to_string());
-        }
-    }
-    None
+    seen_digit.then_some(value)
 }
 
 #[cfg(test)]
@@ -168,8 +179,7 @@ mod tests {
 
     #[test]
     fn split_details_with_extra() {
-        let (main, details) =
-            split_error_details("main error\n\nError details:\nline1\nline2");
+        let (main, details) = split_error_details("main error\n\nError details:\nline1\nline2");
         assert_eq!(main, "main error");
         assert_eq!(details.unwrap(), "line1\nline2");
     }
@@ -184,10 +194,7 @@ Expecting 'SEMI', 'NEWLINE', 'EOF', got 'NODE_STRING'";
         assert_eq!(context.line, Some(2));
         assert_eq!(context.column, Some(11));
         assert!(context.snippet.unwrap().starts_with("graph m"));
-        assert!(context
-            .reason
-            .unwrap()
-            .contains("Expecting 'SEMI'"));
+        assert!(context.reason.unwrap().contains("Expecting 'SEMI'"));
     }
 
     #[test]

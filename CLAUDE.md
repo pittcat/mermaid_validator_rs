@@ -52,7 +52,7 @@ cargo benchcmp /tmp/old.txt /tmp/new.txt
 cargo flamegraph --bin mermaid_validator -- --diagram "graph TD\nA-->B" --format svg
 
 # Use the profiling script (comprehensive profiling)
-./profile_flamegraph.sh
+./tools/perf/profile_flamegraph.sh
 ```
 
 **Prerequisites for full testing:**
@@ -205,3 +205,70 @@ It automatically extracts the Mermaid content and validates fence completeness.
 - All I/O happens concurrently using tokio tasks
 - Timeout is enforced via tokio::select
 - Errors include stderr output for debugging
+
+## Performance Optimization
+
+### Performance Bottlenecks (Identified)
+
+1. **Mermaid CLI Process Spawning** (`src/cli_runner.rs:117`)
+   - Each validation spawns a new `mmdc` process
+   - Spawn overhead: ~10-20ms per process
+   - **Optimization:** Implement process pooling to reuse mmdc instances
+
+2. **Sequential Markdown Validation** (`src/preview_validator.rs:149`)
+   - Diagrams validated one-by-one
+   - No parallel processing of blocks
+   - **Optimization:** Use `tokio::spawn` for concurrent validation
+
+3. **Markdown Parsing Overhead** (`src/preview_validator.rs:223`)
+   - Line-by-line parsing on every request
+   - String allocations for each line
+   - **Optimization:** Use `&str` slices and precompile patterns
+
+4. **String Normalization** (`src/server.rs:250`)
+   - Multiple passes over input string
+   - **Optimization:** Single-pass detection and extraction
+
+### Performance Targets
+
+| Operation | Target Latency | Max Latency |
+|-----------|---------------|-------------|
+| Simple diagram render | < 100ms | 200ms |
+| Complex diagram render | < 500ms | 1s |
+| Markdown scan (10 blocks) | < 50ms | 100ms |
+| Markdown validation (10 blocks) | < 1s | 2s |
+
+### Quick Optimization Wins
+
+```rust
+// 1. Process Pooling
+use std::sync::Arc;
+use tokio::sync::Semaphore;
+
+pub struct MermaidCliPool {
+    semaphore: Arc<Semaphore>,
+}
+
+impl MermaidCliPool {
+    pub async fn render(&self, diagram: &str, format: OutputFormat) -> Result<Vec<u8>, RenderError> {
+        let _permit = self.semaphore.acquire().await.unwrap();
+        render_diagram(diagram, format, self.timeout).await
+    }
+}
+
+// 2. Parallel Validation
+use tokio::task::JoinSet;
+
+pub async fn validate_markdown_parallel(
+    blocks: &[MermaidBlock],
+    timeout: Duration,
+) -> Vec<Option<PreviewIssue>> {
+    let mut join_set = JoinSet::new();
+    for block in blocks {
+        join_set.spawn(render_and_collect(block, timeout));
+    }
+    // Collect results...
+}
+```
+
+See `docs/performance/PERFORMANCE.md` for detailed optimization guide.

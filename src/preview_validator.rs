@@ -71,12 +71,12 @@ struct MermaidBlock {
 }
 
 #[derive(Debug, Clone)]
-struct FenceState {
+struct FenceState<'a> {
     marker: char,
     len: usize,
-    lang: String,
+    is_mermaid: bool,
     start_line: u32,
-    content_lines: Vec<String>,
+    content_lines: Vec<&'a str>,
 }
 
 pub fn scan_markdown_for_mermaid(markdown: &str) -> PreviewScanResult {
@@ -223,7 +223,7 @@ pub async fn validate_mermaid_block_in_markdown(
 fn collect_mermaid_blocks(markdown: &str) -> (Vec<MermaidBlock>, Vec<PreviewIssue>) {
     let mut blocks = Vec::new();
     let mut issues = Vec::new();
-    let mut fence_state: Option<FenceState> = None;
+    let mut fence_state: Option<FenceState<'_>> = None;
     let mut mermaid_index = 0u32;
 
     for (idx, raw_line) in markdown.lines().enumerate() {
@@ -233,7 +233,7 @@ fn collect_mermaid_blocks(markdown: &str) -> (Vec<MermaidBlock>, Vec<PreviewIssu
         if let Some(state) = fence_state.as_mut() {
             if is_fence_close(line, state.marker, state.len) {
                 let closed = fence_state.take().expect("fence state exists");
-                if is_mermaid_lang(&closed.lang) {
+                if closed.is_mermaid {
                     mermaid_index += 1;
                     blocks.push(MermaidBlock {
                         index: mermaid_index,
@@ -243,24 +243,24 @@ fn collect_mermaid_blocks(markdown: &str) -> (Vec<MermaidBlock>, Vec<PreviewIssu
                     });
                 }
             } else {
-                state.content_lines.push(raw_line.to_string());
+                state.content_lines.push(raw_line);
             }
             continue;
         }
 
-        if let Some((marker, len, lang)) = parse_fence_start(line) {
+        if let Some((marker, len, is_mermaid)) = parse_fence_start(line) {
             fence_state = Some(FenceState {
                 marker,
                 len,
-                lang,
+                is_mermaid,
                 start_line: line_no,
-                content_lines: Vec::new(),
+                content_lines: Vec::with_capacity(8),
             });
         }
     }
 
     if let Some(unclosed) = fence_state {
-        let (code, message) = if is_mermaid_lang(&unclosed.lang) {
+        let (code, message) = if unclosed.is_mermaid {
             (
                 "mermaid_unclosed_fence",
                 "Mermaid code block is missing closing fence ```",
@@ -285,7 +285,7 @@ fn collect_mermaid_blocks(markdown: &str) -> (Vec<MermaidBlock>, Vec<PreviewIssu
     (blocks, issues)
 }
 
-fn parse_fence_start(line: &str) -> Option<(char, usize, String)> {
+fn parse_fence_start(line: &str) -> Option<(char, usize, bool)> {
     let mut chars = line.chars();
     let marker = chars.next()?;
     if marker != '`' && marker != '~' {
@@ -304,18 +304,16 @@ fn parse_fence_start(line: &str) -> Option<(char, usize, String)> {
         return None;
     }
 
-    let rest = line[len..].trim().to_string();
-    Some((marker, len, rest))
+    let rest = line[len..].trim();
+    Some((marker, len, is_mermaid_lang(rest)))
 }
 
 fn is_fence_close(line: &str, marker: char, min_len: usize) -> bool {
+    let marker = marker as u8;
+    let bytes = line.as_bytes();
     let mut len = 0usize;
-    for ch in line.chars() {
-        if ch == marker {
-            len += 1;
-        } else {
-            break;
-        }
+    while len < bytes.len() && bytes[len] == marker {
+        len += 1;
     }
     if len < min_len {
         return false;
@@ -350,13 +348,10 @@ fn build_mermaid_parse_issue(block: &MermaidBlock, error_message: &str) -> Previ
 }
 
 fn split_error_details(message: &str) -> (String, Option<String>) {
-    let mut parts = message.split("\n\nError details:\n");
-    let main_error = parts.next().unwrap_or("").to_string();
-    let details: Vec<&str> = parts.collect();
-    if details.is_empty() {
-        (main_error, None)
+    if let Some((main_error, details)) = message.split_once("\n\nError details:\n") {
+        (main_error.to_string(), Some(details.to_string()))
     } else {
-        (main_error, Some(details.join("\n")))
+        (message.to_string(), None)
     }
 }
 
@@ -370,57 +365,73 @@ struct ErrorContext {
 
 fn parse_error_context(message: &str) -> ErrorContext {
     let mut context = ErrorContext::default();
-    let lines: Vec<&str> = message.lines().collect();
+    let mut take_snippet_line = false;
+    let mut take_caret_line = false;
 
-    for (idx, line) in lines.iter().enumerate() {
+    for line in message.lines() {
+        if context.reason.is_none() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty()
+                && (trimmed.contains("Expecting")
+                    || trimmed.contains("UnknownDiagramError")
+                    || trimmed.contains("got "))
+            {
+                context.reason = Some(trimmed.to_string());
+            }
+        }
+
+        if take_snippet_line {
+            context.snippet = Some(line.trim_end().to_string());
+            take_snippet_line = false;
+            take_caret_line = true;
+            continue;
+        }
+
+        if take_caret_line {
+            if let Some(pos) = line.find('^') {
+                context.column = Some((pos + 1) as u32);
+            }
+            take_caret_line = false;
+            continue;
+        }
+
         if let Some(line_number) = extract_line_number(line) {
             context.line = Some(line_number);
-            if let Some(snippet) = lines.get(idx + 1) {
-                context.snippet = Some(snippet.trim_end().to_string());
-            }
-            if let Some(caret_line) = lines.get(idx + 2) {
-                if let Some(pos) = caret_line.find('^') {
-                    context.column = Some((pos + 1) as u32);
-                }
-            }
-            break;
+            take_snippet_line = true;
         }
     }
 
-    context.reason = find_reason(&lines);
     context
 }
 
 fn extract_line_number(line: &str) -> Option<u32> {
-    let lower = line.to_ascii_lowercase();
-    let marker = "parse error on line ";
-    let idx = lower.find(marker)?;
-    let mut chars = line[idx + marker.len()..].chars();
-    let mut number = String::new();
-    for ch in chars.by_ref() {
-        if ch.is_ascii_digit() {
-            number.push(ch);
+    const MARKER: &[u8] = b"parse error on line ";
+    let bytes = line.as_bytes();
+
+    if bytes.len() < MARKER.len() {
+        return None;
+    }
+
+    let marker_start = bytes
+        .windows(MARKER.len())
+        .position(|window| window.eq_ignore_ascii_case(MARKER))?;
+
+    let mut index = marker_start + MARKER.len();
+    let mut value: u32 = 0;
+    let mut seen_digit = false;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte.is_ascii_digit() {
+            seen_digit = true;
+            value = value.checked_mul(10)?.checked_add((byte - b'0') as u32)?;
+            index += 1;
         } else {
             break;
         }
     }
-    number.parse().ok()
-}
 
-fn find_reason(lines: &[&str]) -> Option<String> {
-    for line in lines {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if trimmed.contains("Expecting")
-            || trimmed.contains("UnknownDiagramError")
-            || trimmed.contains("got ")
-        {
-            return Some(trimmed.to_string());
-        }
-    }
-    None
+    seen_digit.then_some(value)
 }
 
 #[cfg(test)]

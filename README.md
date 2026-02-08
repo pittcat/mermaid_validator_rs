@@ -149,3 +149,44 @@ Step 2: validate one block
 ```bash
 cargo test
 ```
+
+## Performance Testing
+
+### Benchmark Tests
+
+```bash
+# Run all benchmarks
+cargo bench
+
+# Generate HTML report with charts
+cargo bench -- --output-format html
+
+# Compare performance between versions
+cargo bench > /tmp/old.txt
+# ... make changes ...
+cargo bench > /tmp/new.txt
+cargo benchcmp /tmp/old.txt /tmp/new.txt
+```
+
+### Flamegraph Profiling
+
+```bash
+# Install flamegraph tool
+cargo install flamegraph
+
+# Profile specific operations
+cargo flamegraph --bin mermaid_validator -- --diagram "graph TD\nA-->B" --format svg
+
+# Run comprehensive profiling script
+./tools/perf/profile_flamegraph.sh
+```
+
+### Performance Bottlenecks
+
+Key performance issues identified:
+
+1. **Mermaid CLI Process Spawning** - Each validation spawns a new process (~10-20ms overhead)
+2. **Sequential Validation** - Markdown blocks validated one-by-one
+3. **String Parsing** - Multiple allocations during Markdown parsing
+
+For detailed optimization strategies, see [PERFORMANCE.md](./docs/performance/PERFORMANCE.md).
